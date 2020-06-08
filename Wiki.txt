@@ -1,0 +1,125 @@
+# Práctica 3 - Multimedia
+
+En el presente documento pasaremos a explicar todo lo relacionado con el desarrollo de la práctica 3 de la asignatura REDES 2.
+
+## Introducción
+
+El objetivo principal de la práctica 3 era llevar a la práctica todos los conocimientos teóricos adquiridos en la teoría de la propia asignatura sobre la
+transmisión multimedia. En este caso, hemos tenido que construir una aplicación en python que permita a un usuario (perteneciente a las asignatura Redes 2) 
+la transmisión de video propio, sin audio, a otro usuario con una aplicación con el mismo versionado soportado. Estas aplicaciones siguen el protocolo P2P y 
+cumplen con el protocolo más sencillo: no es multiconferencia, permite la transmisión en tiempo real de imágenes desde una webcam, soporta las operaciones
+básicas de PLAY y STOP del flujo multimedia, y existe un control de flujo mínimo.
+Por lo tanto, la aplicación permite al usuario llevar a cabo una serie de acciones como registrarse en el servidor, buscar la información asociada a otro
+usuario de la misma red P2P e iniciar una llamada de video con este.
+Con el objetivo de la práctica aclarado, es momento de pasar al desarrollo técnico de la misma.
+
+## Desarrollo técnico
+
+Nuestra aplicación está compuesta por los siguientes ficheros y carpetas:
+
+Contenido de la aplicación | ¿Para qué sirve?
+------------------------ | ----------------
+practica3_client.py | Fichero con el código principal del programa.
+manage_users.py | Fichero encargado de la gestión de las acciones del usuario.
+thread.py | Fichero con el código encargado de la gestión de los hilos.
+.gitignore | Fichero para no subir determinados ficheros al servidor.
+README.md | Fichero con información extra de la práctica.
+
+Lo primero que hicimos nada más comenzar con la práctica, fue comprender el funcionamiento pedido de la propia aplicación además de entender cómo controlar
+el flujo multimedia y actuar con el protocolo P2P. También, comprender la arquitectura de la aplicación, separando las peticiones al servidor y al usuario
+receptor con TCP y la transmisión de multimedia con UDP.
+
+El primer fichero en el que hay que hacer hincapié es el practica3_client.py. Primero, se estudió cómo funcionaba la librería de la interfaz que se nos 
+proporcionaba en la práctica (appJar) y de la cámara (cv2). Tras ello, la clase de VideoClient es la encargada de iniciar y crear la ventana o interfaz
+de la aplicación para el usuario que la vaya a utilizar. 
+Se trata del archivo principal, por lo que es el que se debe ejecutar en terminal y, tras esto, con los datos del usuario incluidos en variables globales 
+en el mismo fichero, se registra el usuario en el servidor sin necesidad de hacerlo manualmente (aunque posteriormente el usuario tiene la opción de volver
+a registrarse). Además, se crea el objeto de VideoClient y se muestra la ventana de este con los dos espacios reservados para el video enviado y recibido, y
+los botones de las distintas acciones que tiene el usuario.
+Por otro lado, también se encarga de crear y poner a ejecutar el hilo de espera de llamadas entrantes de otros usuarios. Este hilo se explicará cuando veamos 
+thread.py.
+En cuanto a las acciones del usuario en la interfaz principal, este puede realizar las siguientes:
+1. Registrarse de nuevo en la aplicación, introduciendo un nick y contraseña nuevos.
+2. Obtener un listado de todos los usuarios registrados en el servidor.
+3. Buscar y obtener la información (IP, puerto y protocolos) de un usuario registrado en el servidor.
+4. Realizar una petición de llamada a un usuario del que conocemos su nick.
+5. Salir de la aplicación, avisando al servidor de la desconexión y liberando recursos.
+Todas estas acciones va asociada a un botón, concretamente en el método de ButtonsCallback de la clase VideoClient.
+
+Las funciones encargadas de cumplir con el objetivo de cada acción se encuentra en el fichero manage_users.py. Este fichero se creó y se fue aumentando la 
+funcionalidad a medida que se incluían nuevas acciones a la aplicación. Todas estas acciones se conectan con el servidor o el otro usuario mediante TCP.
+Los métodos que contiene son:
+
+Métodos | ¿De qué se encarga? | Mensaje
+-------------- | ------------------------- | ----------
+list_users_nicks() | Pide al servidor el listado de usuarios registrados | LIST_USERS
+register_user(nick, password) | Envia y registra los datos del usuario para el registro en el servidor | REGISTER
+query_user(nick) | Pide al servidor la información asociada a un usuario registrado | QUERY
+quit_user() | Avisa al servidor de la desconexión del usuario | QUIT
+mi_ip() | Devuelve la IP privada del usuario para usar en el registro | -
+edit_users_list(users) | Transforma la lista de usuarios devuelta a una lista legible y visual | -
+calling(user_nick) | Realiza una petición de llamada a otro usuario registrado | CALLING
+end_call(user_nick) | Avisa al otro usuario de la llamada de que va a colgar | CALL_END
+accept_call(user_nick) | Comprueba si el usuario puede aceptar la llamada soportando su protocolo | -
+
+Una vez visto este fichero, toca hablar del más importante, thread.py. Este contiene las clases de los hilos utilizados en la aplicación para distintas 
+acciones clave. Concretamente, estos hilos son los siguientes:
+
+Hilo | Función principal
+------------- | -------------
+wait_call_thread | Espera a peticiones entrantes de llamadas y controla la llamada (CALLING y CALL_END) 
+send_video_call_thread | Hilo de envio de los frames al otro usuario 
+receive_video_call_thread | Hilo de recepcion de los frames del otro usuario 
+
+El primer hilo, wait_call_thread, se inicia nada más crearse la interfaz y se queda a la espera de llamadas entrantes de otros usuarios mediante TCP. 
+Cuando una petición CALLING llega, primero comprueba si el usuario no está ya en llamada o si cumple con el protocolo soportado, en cada caso enviaría
+como respuesta CALL_BUSY o CALL_DENIED, respectivamente. Si la acepta, avisa al otro usuario con un CALL_ACCEPTED y le indica su puerto UDP para la
+recepción de los frames. El puerto UDP del usuario que llama ya se conoce en el hilo por la petición CALLING anterior. Entonces, se encarga de crear e iniciar los 
+siguientes dos hilos para la transmisión del flujo multimedia del usuario llamado.
+El que llama realiza la petición en la función calling() y en el callback del botón de Llamar, tras obtener CALL_ACCEPTED del otro usuario, se crean e 
+inician los dos hilos de transmisión del que llama.
+Además, se añaden los botones de pausar y colgar a la interfaz cuando se empieza la llamada.
+
+El segundo hilo, send_video_call_thread, tras iniciarse, se encarga de capturar frame a frame la webcam del usuario y mediante conexión UDP los envía al
+otro usuario. Estos frames van comprimidos en formato JPG al 50% de calidad y van con una cabecera delante con la información referente a: el orden de 
+secuencia en el flujo, la hora a la que se envía, la resolución del frame y el número de FPS. Este hilo finalizará cuando un usuario decida colgar la 
+llamada o se cierre la aplicación.
+
+El tercer hilo, receive_video_call_thread, tras iniciarse, recibe datagramas UDP y separa la cabecera del frame comprimido, para descomprimir este y 
+reproducirlo en la pantalla del usuario. Este hilo finalizará por las mismas causas que el anterior.
+
+Además, todos los hilos son demonios, por lo que si finaliza el proceso principal, estos también lo harán.
+
+Estos hilos además poseen una función para obtener su ID (get_id()) y otra función encargada de lanzar una excepción en el hilo (raise_exception()) para 
+parar su ejecución y así, externamente, poder finalizar el hilo y liberar sus recurso (concretamente cuando el otro usuario cuelga la llamada, este 
+usuario puede seguir usando la app). El que cuelga hace que termine la aplicación también (decisión de diseño).
+
+Los botones de Pausar y Reanudar aparecen en su momento pero no se han implementado sus funciones, así como el control del orden de los frames recibidos
+no se gestiona, ni se controlan los paquetes que se pierdan. Nuestra aplicación permite lo mínimo, las acciones de gestión de identidades y envío y 
+recepción de tráfico multimedia sencillo.
+
+Cabe recalcar que hemos hecho pruebas con otro cliente, cambiando solamente los puertos de control y UDP, y ha funcionado correctamente esta mínima 
+funcionalidad. También, es necesario incluir una carpeta llamada imgs/ en el proyecto con el archivo webcam.gif dentro, del que se obtiene la imagen
+de video de la cámara (no la incluimos en el repositorio por no incluir peso innecesario).
+
+## Conclusiones técnicas
+
+Esta práctica, en comparación con las otras dos, ha supuesto un reto importante, ya que hemos tenido que documentarnos mucho en comparación y pensar 
+muchas formas de realización de todas las especificaciones indicadas. 
+Por suerte, el lenguaje de programación ha supuesto un plus, ya que nos ha permitido programar algunas partes de manera más rápida y sencilla.
+En cuanto al protocolo y la arquitectura, nos costó al principio entenderlos y distribuir bien todos los hilos para que toda la ejecución del cliente
+tuviese coherencia y fuese eficiente.
+Los hilos ha sido lo más problemático en la práctica, pero al final hemos conseguido entender cómo conectarnos correctamente, dependiendo del protocolo,
+y realizar las peticiones de forma correcta, así como recibirlas.
+En definitiva, ha sido una práctica dura pero bastante importante para adaptarnos al funcionamiento de aplicaciones multimedia y entender cómo controlan
+todo por debajo.
+
+## Conclusiones personales
+
+A pesar de la situación actual, nos habíamos quedado sin tiempo para poder realizar más funciones realmente claves, como el control de congestión, las 
+pérdidas de paquetes, pausar o reanudar una llamada...
+Creemos que si hubiéramos tenido una semana más, se podría haber alcanzado todos estos requisitos.
+Por otra parte, hemos trabajado bien y nos hemos organizado correctamente.
+Los ficheros están bien estructurados y comentados, para evitar la confusión del profesorado y aumentar su comprensión.
+En resumen, la práctica podría haber llegado a más con más tiempo, pero hemos conseguido una aplicación medianamente funcional y hemos comprendido los 
+conocimientos asociados a esta práctica.
